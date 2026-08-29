@@ -1,0 +1,6 @@
+event_id,occurred_at,user_id,event_name,plan,country,amount_usd
+evt-1001,2026-08-01T08:00:00Z,user-001,page_view,starter,in,0
+evt-1002,2026-08-01T08:05:00Z,user-001,trial_started,starter,in,0
+evt-1003,2026-08-01T11:20:00Z,user-002,subscription_started,growth,us,0
+evt-1004,2026-08-01T11:25:00Z,user-002,invoice_paid,growth,us,49
+evt-1005,2026-08-02T09:15:00Z,user-003,page_view,starter,gb,0
