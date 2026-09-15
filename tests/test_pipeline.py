@@ -1,7 +1,9 @@
 import csv
+import json
 import sqlite3
 
-from product_analytics.pipeline import run_pipeline
+from product_analytics.__main__ import format_result
+from product_analytics.pipeline import PipelineResult, run_pipeline
 
 
 HEADERS = ["event_id", "occurred_at", "user_id", "event_name", "plan", "country", "amount_usd"]
@@ -84,3 +86,25 @@ def test_pipeline_skips_a_successfully_processed_source(tmp_path):
 
     assert first_run.status == "succeeded"
     assert second_run.status == "skipped_duplicate_source"
+
+
+def test_format_result_returns_machine_readable_json():
+    result = PipelineResult(
+        run_id="run-123",
+        status="succeeded",
+        rows_read=3,
+        rows_loaded=2,
+        rows_rejected=1,
+        rows_duplicate=0,
+        affected_dates=("2026-08-01",),
+    )
+
+    assert json.loads(format_result(result)) == {
+        "affected_dates": ["2026-08-01"],
+        "rows_duplicate": 0,
+        "rows_loaded": 2,
+        "rows_read": 3,
+        "rows_rejected": 1,
+        "run_id": "run-123",
+        "status": "succeeded",
+    }

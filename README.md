@@ -24,6 +24,9 @@ product-analytics \
   --database data/analytics.db
 ```
 
+The command prints a JSON run summary, which makes it easy to capture row
+counts and the affected dates in an orchestrator or CI log.
+
 ## Query the resulting mart
 
 ```bash
