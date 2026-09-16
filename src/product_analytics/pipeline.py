@@ -97,6 +97,7 @@ def initialize_warehouse(database_path: Path) -> None:
                 plan TEXT NOT NULL,
                 country TEXT NOT NULL,
                 active_users INTEGER NOT NULL,
+                page_views INTEGER NOT NULL DEFAULT 0,
                 trials_started INTEGER NOT NULL,
                 subscriptions_started INTEGER NOT NULL,
                 paid_invoices INTEGER NOT NULL,
@@ -106,6 +107,27 @@ def initialize_warehouse(database_path: Path) -> None:
             );
             """
         )
+        metric_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(daily_product_metrics)")
+        }
+        if "page_views" not in metric_columns:
+            connection.execute(
+                "ALTER TABLE daily_product_metrics ADD COLUMN page_views INTEGER NOT NULL DEFAULT 0"
+            )
+            connection.execute(
+                """
+                UPDATE daily_product_metrics
+                SET page_views = (
+                    SELECT COUNT(*)
+                    FROM raw_events
+                    WHERE raw_events.event_date = daily_product_metrics.metric_date
+                      AND raw_events.plan = daily_product_metrics.plan
+                      AND raw_events.country = daily_product_metrics.country
+                      AND raw_events.event_name = 'page_view'
+                )
+                """
+            )
 
 
 def _checksum(source_path: Path) -> str:
@@ -159,7 +181,7 @@ def _refresh_daily_metrics(connection: sqlite3.Connection, dates: set[str]) -> N
         connection.execute(
             """
             INSERT INTO daily_product_metrics (
-                metric_date, plan, country, active_users, trials_started,
+                metric_date, plan, country, active_users, page_views, trials_started,
                 subscriptions_started, paid_invoices, revenue_usd, refreshed_at
             )
             SELECT
@@ -167,6 +189,7 @@ def _refresh_daily_metrics(connection: sqlite3.Connection, dates: set[str]) -> N
                 plan,
                 country,
                 COUNT(DISTINCT user_id),
+                SUM(CASE WHEN event_name = 'page_view' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN event_name = 'trial_started' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN event_name = 'subscription_started' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN event_name = 'invoice_paid' THEN 1 ELSE 0 END),
