@@ -62,11 +62,11 @@ def test_pipeline_loads_valid_events_tracks_rejections_and_builds_metrics(tmp_pa
         metric = connection.execute(
             """
             SELECT active_users, page_views, trials_started, subscriptions_started,
-                   paid_invoices, revenue_usd
+                   paid_invoices, paying_users, revenue_usd
             FROM daily_product_metrics
             """
         ).fetchone()
-    assert metric == (1, 0, 1, 0, 1, 19.99)
+    assert metric == (1, 0, 1, 0, 1, 1, 19.99)
 
 
 def test_pipeline_skips_a_successfully_processed_source(tmp_path):
@@ -94,7 +94,7 @@ def test_pipeline_skips_a_successfully_processed_source(tmp_path):
     assert second_run.status == "skipped_duplicate_source"
 
 
-def test_initialize_warehouse_migrates_and_backfills_page_views(tmp_path):
+def test_initialize_warehouse_migrates_and_backfills_additive_metrics(tmp_path):
     warehouse = tmp_path / "analytics.db"
     with sqlite3.connect(warehouse) as connection:
         connection.executescript(
@@ -103,10 +103,12 @@ def test_initialize_warehouse_migrates_and_backfills_page_views(tmp_path):
                 event_date TEXT NOT NULL,
                 plan TEXT NOT NULL,
                 country TEXT NOT NULL,
-                event_name TEXT NOT NULL
+                event_name TEXT NOT NULL,
+                user_id TEXT NOT NULL
             );
-            INSERT INTO raw_events VALUES ('2026-08-01', 'starter', 'IN', 'page_view');
-            INSERT INTO raw_events VALUES ('2026-08-01', 'starter', 'IN', 'page_view');
+            INSERT INTO raw_events VALUES ('2026-08-01', 'starter', 'IN', 'page_view', 'user-1');
+            INSERT INTO raw_events VALUES ('2026-08-01', 'starter', 'IN', 'page_view', 'user-2');
+            INSERT INTO raw_events VALUES ('2026-08-01', 'starter', 'IN', 'invoice_paid', 'user-1');
             CREATE TABLE daily_product_metrics (
                 metric_date TEXT NOT NULL,
                 plan TEXT NOT NULL,
@@ -129,9 +131,9 @@ def test_initialize_warehouse_migrates_and_backfills_page_views(tmp_path):
 
     with sqlite3.connect(warehouse) as connection:
         metric = connection.execute(
-            "SELECT page_views FROM daily_product_metrics"
+            "SELECT page_views, paying_users FROM daily_product_metrics"
         ).fetchone()
-    assert metric == (2,)
+    assert metric == (2, 1)
 
 
 def test_format_result_returns_machine_readable_json():

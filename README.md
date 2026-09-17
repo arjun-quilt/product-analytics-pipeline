@@ -31,7 +31,7 @@ counts and the affected dates in an orchestrator or CI log.
 
 ```bash
 sqlite3 data/analytics.db \
-  "SELECT metric_date, plan, country, active_users, page_views, revenue_usd FROM daily_product_metrics;"
+  "SELECT metric_date, plan, country, active_users, page_views, paying_users, revenue_usd FROM daily_product_metrics;"
 ```
 
 ## Test

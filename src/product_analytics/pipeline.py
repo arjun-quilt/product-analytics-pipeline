@@ -101,6 +101,7 @@ def initialize_warehouse(database_path: Path) -> None:
                 trials_started INTEGER NOT NULL,
                 subscriptions_started INTEGER NOT NULL,
                 paid_invoices INTEGER NOT NULL,
+                paying_users INTEGER NOT NULL DEFAULT 0,
                 revenue_usd REAL NOT NULL,
                 refreshed_at TEXT NOT NULL,
                 PRIMARY KEY (metric_date, plan, country)
@@ -125,6 +126,23 @@ def initialize_warehouse(database_path: Path) -> None:
                       AND raw_events.plan = daily_product_metrics.plan
                       AND raw_events.country = daily_product_metrics.country
                       AND raw_events.event_name = 'page_view'
+                )
+                """
+            )
+        if "paying_users" not in metric_columns:
+            connection.execute(
+                "ALTER TABLE daily_product_metrics ADD COLUMN paying_users INTEGER NOT NULL DEFAULT 0"
+            )
+            connection.execute(
+                """
+                UPDATE daily_product_metrics
+                SET paying_users = (
+                    SELECT COUNT(DISTINCT user_id)
+                    FROM raw_events
+                    WHERE raw_events.event_date = daily_product_metrics.metric_date
+                      AND raw_events.plan = daily_product_metrics.plan
+                      AND raw_events.country = daily_product_metrics.country
+                      AND raw_events.event_name = 'invoice_paid'
                 )
                 """
             )
@@ -182,7 +200,7 @@ def _refresh_daily_metrics(connection: sqlite3.Connection, dates: set[str]) -> N
             """
             INSERT INTO daily_product_metrics (
                 metric_date, plan, country, active_users, page_views, trials_started,
-                subscriptions_started, paid_invoices, revenue_usd, refreshed_at
+                subscriptions_started, paid_invoices, paying_users, revenue_usd, refreshed_at
             )
             SELECT
                 event_date,
@@ -193,6 +211,7 @@ def _refresh_daily_metrics(connection: sqlite3.Connection, dates: set[str]) -> N
                 SUM(CASE WHEN event_name = 'trial_started' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN event_name = 'subscription_started' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN event_name = 'invoice_paid' THEN 1 ELSE 0 END),
+                COUNT(DISTINCT CASE WHEN event_name = 'invoice_paid' THEN user_id END),
                 ROUND(SUM(CASE WHEN event_name = 'invoice_paid' THEN amount_usd ELSE 0 END), 2),
                 ?
             FROM raw_events
