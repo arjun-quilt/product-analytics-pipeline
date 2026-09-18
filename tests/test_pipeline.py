@@ -3,7 +3,7 @@ import json
 import sqlite3
 
 from product_analytics.__main__ import format_result
-from product_analytics.pipeline import PipelineResult, initialize_warehouse, run_pipeline
+from product_analytics.pipeline import EventValidationError, PipelineResult, initialize_warehouse, run_pipeline
 
 
 HEADERS = ["event_id", "occurred_at", "user_id", "event_name", "plan", "country", "amount_usd"]
@@ -92,6 +92,28 @@ def test_pipeline_skips_a_successfully_processed_source(tmp_path):
 
     assert first_run.status == "succeeded"
     assert second_run.status == "skipped_duplicate_source"
+
+
+def test_pipeline_rejects_duplicate_source_columns_and_records_the_failure(tmp_path):
+    source = tmp_path / "events.csv"
+    warehouse = tmp_path / "analytics.db"
+    source.write_text(
+        "event_id,event_id,occurred_at,user_id,event_name,plan,country,amount_usd\n"
+        "evt-1,ignored,2026-08-01T10:00:00Z,user-1,page_view,starter,IN,0\n"
+    )
+
+    try:
+        run_pipeline(source, warehouse)
+    except EventValidationError as error:
+        assert str(error) == "source has duplicate columns: event_id"
+    else:
+        raise AssertionError("duplicate source columns should fail the pipeline")
+
+    with sqlite3.connect(warehouse) as connection:
+        pipeline_run = connection.execute(
+            "SELECT status, error_message FROM pipeline_runs"
+        ).fetchone()
+    assert pipeline_run == ("failed", "source has duplicate columns: event_id")
 
 
 def test_initialize_warehouse_migrates_and_backfills_additive_metrics(tmp_path):

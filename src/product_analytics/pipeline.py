@@ -259,7 +259,15 @@ def run_pipeline(source_path: str | Path, database_path: str | Path) -> Pipeline
     try:
         with source.open(newline="", encoding="utf-8") as source_file, _connect(database) as connection:
             reader = csv.DictReader(source_file)
-            actual_columns = set(reader.fieldnames or [])
+            header_names = reader.fieldnames or []
+            actual_columns = set(header_names)
+            duplicate_columns = sorted(
+                column for column in actual_columns if header_names.count(column) > 1
+            )
+            if duplicate_columns:
+                raise EventValidationError(
+                    f"source has duplicate columns: {', '.join(duplicate_columns)}"
+                )
             missing_columns = REQUIRED_COLUMNS - actual_columns
             if missing_columns:
                 raise EventValidationError(f"source is missing columns: {', '.join(sorted(missing_columns))}")
