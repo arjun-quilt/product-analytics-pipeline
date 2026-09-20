@@ -158,6 +158,21 @@ def test_initialize_warehouse_migrates_and_backfills_additive_metrics(tmp_path):
     assert metric == (2, 1)
 
 
+def test_initialize_warehouse_creates_operational_indexes(tmp_path):
+    warehouse = tmp_path / "analytics.db"
+
+    initialize_warehouse(warehouse)
+
+    with sqlite3.connect(warehouse) as connection:
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+    assert {"idx_raw_events_daily_metrics", "idx_rejected_events_run_id"} <= indexes
+
+
 def test_format_result_returns_machine_readable_json():
     result = PipelineResult(
         run_id="run-123",

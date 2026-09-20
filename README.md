@@ -13,7 +13,7 @@ CSV event source
    └── daily_product_metrics (incrementally refreshed semantic layer)
 ```
 
-The source file checksum prevents a successful source from being loaded twice. The raw event primary key protects the pipeline again when files overlap, and duplicate CSV column names fail the run before records are loaded.
+The source file checksum prevents a successful source from being loaded twice. The raw event primary key protects the pipeline again when files overlap, and duplicate CSV column names fail the run before records are loaded. SQLite indexes speed up daily metric refreshes and rejected-record lookups.
 
 ## Run
 

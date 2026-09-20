@@ -106,6 +106,12 @@ def initialize_warehouse(database_path: Path) -> None:
                 refreshed_at TEXT NOT NULL,
                 PRIMARY KEY (metric_date, plan, country)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_raw_events_daily_metrics
+                ON raw_events (event_date, plan, country, event_name);
+
+            CREATE INDEX IF NOT EXISTS idx_rejected_events_run_id
+                ON rejected_events (run_id);
             """
         )
         metric_columns = {
