@@ -1,5 +1,7 @@
 # Product Analytics Pipeline
 
+[![Tests](https://github.com/arjun-quilt/product-analytics-pipeline/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/arjun-quilt/product-analytics-pipeline/actions/workflows/tests.yml)
+
 An incremental ELT pipeline that turns raw product events into a daily analytics mart. It uses only the Python standard library and SQLite so it can be run and tested locally, while keeping the same concerns as a warehouse pipeline: input contracts, idempotency, rejected-record handling, and repeatable metric models.
 
 ## Architecture
@@ -36,9 +38,19 @@ sqlite3 data/analytics.db \
 
 ## Test
 
+With Python 3.11 or newer, create a virtual environment and install the test dependencies:
+
 ```bash
-pytest
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[test]"
+python -m pytest
 ```
+
+GitHub Actions runs the test suite and the installed CLI against the sample events
+on Python 3.11, 3.12, 3.13, and 3.14 for every push to `main` and every pull request
+targeting `main`. You can also run the **Tests** workflow manually from the
+repository's Actions tab.
 
 ## Production extension points
 

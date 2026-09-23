@@ -4,6 +4,9 @@ version = "1.0.0"
 description = "An incremental local ELT pipeline for product analytics events."
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
 [project.scripts]
 product-analytics = "product_analytics.__main__:main"
 
