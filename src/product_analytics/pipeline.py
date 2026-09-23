@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -182,6 +183,8 @@ def _parse_event(record: dict[str, str | None]) -> AnalyticsEvent:
         amount_usd = float(record["amount_usd"] or "")
     except ValueError as error:
         raise EventValidationError("amount_usd must be numeric") from error
+    if not math.isfinite(amount_usd):
+        raise EventValidationError("amount_usd must be finite")
     if amount_usd < 0:
         raise EventValidationError("amount_usd must be non-negative")
 
@@ -243,22 +246,37 @@ def run_pipeline(source_path: str | Path, database_path: str | Path) -> Pipeline
     initialize_warehouse(database)
     source_checksum = _checksum(source)
     with _connect(database) as connection:
+        # Claim the source atomically, retaining one audit record per checksum.
+        connection.execute("BEGIN IMMEDIATE")
         existing_run = connection.execute(
-            "SELECT run_id FROM pipeline_runs WHERE source_checksum = ? AND status = 'succeeded'",
+            "SELECT run_id, status FROM pipeline_runs WHERE source_checksum = ?",
             (source_checksum,),
         ).fetchone()
-    if existing_run:
-        return PipelineResult(None, "skipped_duplicate_source", 0, 0, 0, 0, ())
-
-    run_id = str(uuid4())
-    with _connect(database) as connection:
-        connection.execute(
-            """
-            INSERT INTO pipeline_runs (run_id, source_checksum, source_name, status, started_at)
-            VALUES (?, ?, ?, 'running', ?)
-            """,
-            (run_id, source_checksum, source.name, _now()),
-        )
+        if existing_run:
+            if existing_run["status"] == "succeeded":
+                return PipelineResult(None, "skipped_duplicate_source", 0, 0, 0, 0, ())
+            if existing_run["status"] != "failed":
+                raise RuntimeError(f"source already has an unfinished run: {existing_run['run_id']}")
+            run_id = existing_run["run_id"]
+            connection.execute(
+                """
+                UPDATE pipeline_runs
+                SET source_name = ?, status = 'running', started_at = ?, completed_at = NULL,
+                    rows_read = 0, rows_loaded = 0, rows_rejected = 0, rows_duplicate = 0,
+                    error_message = NULL
+                WHERE run_id = ?
+                """,
+                (source.name, _now(), run_id),
+            )
+        else:
+            run_id = str(uuid4())
+            connection.execute(
+                """
+                INSERT INTO pipeline_runs (run_id, source_checksum, source_name, status, started_at)
+                VALUES (?, ?, ?, 'running', ?)
+                """,
+                (run_id, source_checksum, source.name, _now()),
+            )
 
     rows_read = rows_loaded = rows_rejected = rows_duplicate = 0
     affected_dates: set[str] = set()

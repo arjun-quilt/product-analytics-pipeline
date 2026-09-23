@@ -1,7 +1,11 @@
 import csv
+import hashlib
 import json
 import sqlite3
 
+import pytest
+
+from product_analytics import pipeline
 from product_analytics.__main__ import format_result
 from product_analytics.pipeline import EventValidationError, PipelineResult, initialize_warehouse, run_pipeline
 
@@ -114,6 +118,101 @@ def test_pipeline_rejects_duplicate_source_columns_and_records_the_failure(tmp_p
             "SELECT status, error_message FROM pipeline_runs"
         ).fetchone()
     assert pipeline_run == ("failed", "source has duplicate columns: event_id")
+
+
+@pytest.mark.parametrize("amount", ["NaN", "Infinity", "-Infinity", "1e309"])
+def test_pipeline_rejects_non_finite_amounts_without_corrupting_metrics(tmp_path, amount):
+    source = tmp_path / "events.csv"
+    warehouse = tmp_path / "analytics.db"
+    valid_event = {
+        "event_id": "evt-valid",
+        "occurred_at": "2026-08-01T10:00:00Z",
+        "user_id": "user-1",
+        "event_name": "invoice_paid",
+        "plan": "starter",
+        "country": "IN",
+        "amount_usd": "19.99",
+    }
+    write_source(source, [{**valid_event, "event_id": "evt-invalid", "amount_usd": amount}, valid_event])
+
+    result = run_pipeline(source, warehouse)
+
+    assert (result.rows_read, result.rows_loaded, result.rows_rejected, result.rows_duplicate) == (2, 1, 1, 0)
+    with sqlite3.connect(warehouse) as connection:
+        assert connection.execute("SELECT event_id FROM raw_events").fetchall() == [("evt-valid",)]
+        assert connection.execute("SELECT error_message FROM rejected_events").fetchall() == [
+            ("amount_usd must be finite",)
+        ]
+        assert connection.execute(
+            "SELECT paid_invoices, paying_users, revenue_usd FROM daily_product_metrics"
+        ).fetchone() == (1, 1, 19.99)
+
+
+def test_pipeline_retries_a_failed_source_without_partial_data(tmp_path, monkeypatch):
+    source = tmp_path / "events.csv"
+    warehouse = tmp_path / "analytics.db"
+    valid_event = {
+        "event_id": "evt-valid",
+        "occurred_at": "2026-08-01T10:00:00Z",
+        "user_id": "user-1",
+        "event_name": "page_view",
+        "plan": "starter",
+        "country": "IN",
+        "amount_usd": "0",
+    }
+    write_source(source, [valid_event, {**valid_event, "event_id": "evt-invalid", "occurred_at": "bad-date"}])
+
+    def fail_refresh(connection, dates):
+        raise sqlite3.OperationalError("temporary refresh failure")
+
+    with monkeypatch.context() as context:
+        context.setattr(pipeline, "_refresh_daily_metrics", fail_refresh)
+        with pytest.raises(sqlite3.OperationalError, match="temporary refresh failure"):
+            run_pipeline(source, warehouse)
+
+    with sqlite3.connect(warehouse) as connection:
+        failed_run = connection.execute("SELECT run_id, status, error_message FROM pipeline_runs").fetchone()
+        assert failed_run[1:] == ("failed", "temporary refresh failure")
+        assert connection.execute("SELECT COUNT(*) FROM raw_events").fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM rejected_events").fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM daily_product_metrics").fetchone() == (0,)
+
+    retry = run_pipeline(source, warehouse)
+
+    assert retry.run_id == failed_run[0]
+    assert retry.status == "succeeded"
+    assert (retry.rows_read, retry.rows_loaded, retry.rows_rejected, retry.rows_duplicate) == (2, 1, 1, 0)
+    with sqlite3.connect(warehouse) as connection:
+        assert connection.execute(
+            "SELECT status, error_message, rows_loaded, rows_rejected FROM pipeline_runs"
+        ).fetchall() == [("succeeded", None, 1, 1)]
+        assert connection.execute("SELECT COUNT(*) FROM raw_events").fetchone() == (1,)
+        assert connection.execute("SELECT COUNT(*) FROM rejected_events").fetchone() == (1,)
+        assert connection.execute("SELECT page_views FROM daily_product_metrics").fetchone() == (1,)
+    assert run_pipeline(source, warehouse).status == "skipped_duplicate_source"
+
+
+def test_pipeline_does_not_take_over_an_unfinished_run(tmp_path):
+    source = tmp_path / "events.csv"
+    warehouse = tmp_path / "analytics.db"
+    write_source(source, [])
+    initialize_warehouse(warehouse)
+    with sqlite3.connect(warehouse) as connection:
+        connection.execute(
+            """
+            INSERT INTO pipeline_runs (run_id, source_checksum, source_name, status, started_at)
+            VALUES (?, ?, ?, 'running', '2026-08-01T10:00:00+00:00')
+            """,
+            ("active-run", hashlib.sha256(source.read_bytes()).hexdigest(), source.name),
+        )
+
+    with pytest.raises(RuntimeError, match="unfinished run: active-run"):
+        run_pipeline(source, warehouse)
+
+    with sqlite3.connect(warehouse) as connection:
+        assert connection.execute("SELECT run_id, status FROM pipeline_runs").fetchall() == [
+            ("active-run", "running")
+        ]
 
 
 def test_initialize_warehouse_migrates_and_backfills_additive_metrics(tmp_path):
